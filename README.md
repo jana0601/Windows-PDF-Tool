@@ -12,6 +12,8 @@ Windows desktop PDF utility built with Python and PySide6.
 - Compress PDF with custom DPI/quality and optional grayscale
 - Export PDF pages to PNG/JPG images
 
+## Layout
+![Scan tab](UI.png)
 ## User Manual
 
 See `USER_MANUAL.md` for complete usage instructions.
