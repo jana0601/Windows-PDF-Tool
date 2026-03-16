@@ -1,0 +1,18 @@
+[project]
+name = "windows-pdf-tool"
+version = "0.1.0"
+description = "Windows PDF desktop utility with editing, page ops, merge, compress, and export."
+requires-python = ">=3.10"
+dependencies = [
+  "PySide6",
+  "PyMuPDF",
+  "pypdf",
+  "Pillow",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
