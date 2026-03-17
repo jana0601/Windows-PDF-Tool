@@ -5,6 +5,7 @@ import tempfile
 
 import pymupdf as fitz
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -21,7 +22,13 @@ from PySide6.QtWidgets import (
 )
 
 from src.services.pdf_compress_service import compress_pdf, preview_compress
-from src.services.pdf_edit_service import default_output_path, save_deleted_pages, save_with_actions
+from src.services.pdf_edit_service import (
+    default_output_path,
+    save_deleted_pages,
+    save_reordered_pages,
+    save_rotated_pages,
+    save_with_actions,
+)
 from src.services.pdf_export_service import export_pdf_to_images
 from src.services.pdf_merge_service import merge_pdfs
 from src.ui.pdf_canvas import PdfCanvas
@@ -41,6 +48,7 @@ class MainWindow(QMainWindow):
 
         self.merge_files: list[str] = []
         self._main_splitter: QSplitter | None = None
+        self._active_preview_pdf: str | None = None
 
         self.canvas = PdfCanvas(self)
         self.status = QStatusBar(self)
@@ -128,6 +136,8 @@ class MainWindow(QMainWindow):
 
         self.page_panel.deletePagesRequested.connect(self.delete_pages)
         self.page_panel.previewRequested.connect(self.preview_page_delete)
+        self.page_panel.rotatePagesRequested.connect(self.rotate_pages)
+        self.page_panel.reorderPagesRequested.connect(self.reorder_pages)
 
         self.merge_panel.addFilesRequested.connect(self.add_merge_files)
         self.merge_panel.clearFilesRequested.connect(self.clear_merge_files)
@@ -142,10 +152,28 @@ class MainWindow(QMainWindow):
         self.export_panel.exportRequested.connect(self.export_images)
 
     def open_pdf(self) -> None:
+        if self.canvas.state.has_document and self._has_pending_changes():
+            choice = QMessageBox.question(
+                self,
+                "Unsaved changes",
+                "Current PDF has unsaved changes. Save before opening another file?",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if choice == QMessageBox.StandardButton.Cancel:
+                return
+            if choice == QMessageBox.StandardButton.Save:
+                self.save_as()
+                if self._has_pending_changes():
+                    return
+
         path = pick_pdf(self)
         if not path:
             return
         try:
+            self._clear_active_preview_pdf()
             self.canvas.load_pdf(path)
             self.status.showMessage(f"Opened: {path}", 4000)
         except Exception as exc:
@@ -177,6 +205,11 @@ class MainWindow(QMainWindow):
             return
         try:
             save_with_actions(state.file_path, output, self.canvas.get_actions())
+            old_preview = self._active_preview_pdf
+            self.canvas.load_pdf(output)
+            if old_preview and old_preview != output:
+                self._cleanup_temp_pdf(old_preview)
+            self._active_preview_pdf = None
             self.status.showMessage(f"Saved: {output}", 5000)
         except Exception as exc:
             self._error(f"Failed to save PDF:\n{exc}")
@@ -196,21 +229,74 @@ class MainWindow(QMainWindow):
         if not pages:
             self._error("Enter pages to delete, e.g. 2,4-6")
             return
-        if not self._confirm(f"Delete pages: {pages}? This action creates a new output file."):
-            return
-        output = save_pdf_as(self, "Save PDF after deleting pages", default_output_path(state.file_path, "pages_deleted"))
-        if not output:
-            return
-        if Path(output).exists() and not self._confirm("Output exists. Overwrite?"):
-            return
         temp_pdf: str | None = None
+        preview_pdf: str | None = None
         try:
             source_pdf, temp_pdf = self._source_pdf_for_current_view()
-            save_deleted_pages(source_pdf, output, pages)
-            self.canvas.load_pdf(output)
-            self.status.showMessage(f"Saved with deleted pages: {output}", 5000)
+            temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            preview_pdf = temp_file.name
+            temp_file.close()
+            save_deleted_pages(source_pdf, preview_pdf, pages)
+            self._load_preview_pdf(preview_pdf)
+            self.status.showMessage("Delete preview applied. Use Save As to keep changes.", 6000)
         except Exception as exc:
             self._error(f"Failed to delete pages:\n{exc}")
+        finally:
+            self._cleanup_temp_pdf(temp_pdf)
+
+    def rotate_pages(self, page_range_text: str, angle: int) -> None:
+        state = self.canvas.state
+        if not state.file_path:
+            self._error("Open a PDF before rotating pages.")
+            return
+        pages = parse_page_range(page_range_text)
+        if not pages:
+            self._error("Enter pages to rotate, e.g. 1,3-5")
+            return
+        temp_pdf: str | None = None
+        preview_pdf: str | None = None
+        try:
+            source_pdf, temp_pdf = self._source_pdf_for_current_view()
+            temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            preview_pdf = temp_file.name
+            temp_file.close()
+            save_rotated_pages(source_pdf, preview_pdf, pages, angle)
+            self._load_preview_pdf(preview_pdf)
+            self.status.showMessage("Rotate preview applied. Use Save As to keep changes.", 6000)
+        except Exception as exc:
+            self._error(f"Failed to rotate pages:\n{exc}")
+        finally:
+            self._cleanup_temp_pdf(temp_pdf)
+
+    def reorder_pages(self, order_text: str) -> None:
+        state = self.canvas.state
+        if not state.file_path:
+            self._error("Open a PDF before reordering pages.")
+            return
+        order = parse_page_order(order_text)
+        if not order:
+            self._error("Enter full reorder sequence, e.g. 3,1,2,4")
+            return
+        total = self._pdf_page_count(state.file_path)
+        if total <= 0:
+            self._error("Unable to read page count.")
+            return
+        if sorted(order) != list(range(1, total + 1)):
+            self._error(f"Reorder must include each page exactly once (1-{total}).")
+            return
+
+        temp_pdf: str | None = None
+        preview_pdf: str | None = None
+        try:
+            source_pdf, temp_pdf = self._source_pdf_for_current_view()
+            temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            preview_pdf = temp_file.name
+            temp_file.close()
+            save_reordered_pages(source_pdf, preview_pdf, order)
+            self._load_preview_pdf(preview_pdf)
+            self.status.showMessage("Reorder preview applied. Use Save As to keep changes.", 6000)
+        except Exception as exc:
+            self._error(f"Failed to reorder pages:\n{exc}")
         finally:
             self._cleanup_temp_pdf(temp_pdf)
 
@@ -419,6 +505,10 @@ class MainWindow(QMainWindow):
         ]
         if remaining <= 0:
             lines.append("Warning: deleting all pages is not allowed.")
+        reorder = parse_page_order(self.page_panel.reorder_edit.text().strip())
+        if reorder:
+            lines.append("")
+            lines.append(f"Reorder sequence (raw): {reorder}")
         self.page_panel.set_preview_text("\n".join(lines))
 
     def _pdf_page_count(self, path: str) -> int:
@@ -435,6 +525,18 @@ class MainWindow(QMainWindow):
         left = min(260, max(220, int(total * 0.22)))
         right = max(500, total - left - 40)
         self._main_splitter.setSizes([left, right])
+
+    def _load_preview_pdf(self, temp_pdf_path: str) -> None:
+        self._clear_active_preview_pdf()
+        self.canvas.load_pdf(temp_pdf_path)
+        self._active_preview_pdf = temp_pdf_path
+
+    def _clear_active_preview_pdf(self) -> None:
+        if not self._active_preview_pdf:
+            return
+        path = self._active_preview_pdf
+        self._active_preview_pdf = None
+        self._cleanup_temp_pdf(path)
 
     def _source_pdf_for_current_view(self) -> tuple[str, str | None]:
         state = self.canvas.state
@@ -453,6 +555,41 @@ class MainWindow(QMainWindow):
                 Path(temp_pdf).unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _has_pending_changes(self) -> bool:
+        return bool(self.canvas.get_actions()) or self._active_preview_pdf is not None
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._has_pending_changes():
+            self._clear_active_preview_pdf()
+            event.accept()
+            return
+
+        choice = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            "You have unsaved changes. Save before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+
+        if choice == QMessageBox.StandardButton.Cancel:
+            event.ignore()
+            return
+        if choice == QMessageBox.StandardButton.Discard:
+            self._clear_active_preview_pdf()
+            event.accept()
+            return
+
+        # Save selected
+        self.save_as()
+        if self._has_pending_changes():
+            event.ignore()
+            return
+        self._clear_active_preview_pdf()
+        event.accept()
 
 
 def parse_page_range(page_text: str) -> list[int]:
@@ -476,6 +613,18 @@ def parse_page_range(page_text: str) -> list[int]:
         elif token.isdigit():
             pages.add(int(token))
     return sorted(p for p in pages if p > 0)
+
+
+def parse_page_order(order_text: str) -> list[int]:
+    raw = order_text.strip()
+    if not raw:
+        return []
+    result: list[int] = []
+    for part in raw.split(","):
+        token = part.strip()
+        if token.isdigit():
+            result.append(int(token))
+    return result
 
 
 def format_mb(size_bytes: int) -> str:

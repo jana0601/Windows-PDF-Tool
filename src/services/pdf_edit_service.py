@@ -48,6 +48,49 @@ def save_deleted_pages(
         doc.close()
 
 
+def save_rotated_pages(
+    source_pdf_path: str,
+    output_pdf_path: str,
+    one_based_pages_to_rotate: list[int],
+    angle: int,
+) -> None:
+    if angle not in {90, 180, 270}:
+        raise ValueError("Rotation angle must be 90, 180, or 270.")
+    doc = fitz.open(source_pdf_path)
+    try:
+        for one_based in sorted(set(one_based_pages_to_rotate)):
+            idx = one_based - 1
+            if 0 <= idx < doc.page_count:
+                page = doc[idx]
+                current = page.rotation
+                page.set_rotation((current + angle) % 360)
+        doc.save(output_pdf_path)
+    finally:
+        doc.close()
+
+
+def save_reordered_pages(
+    source_pdf_path: str,
+    output_pdf_path: str,
+    one_based_new_order: list[int],
+) -> None:
+    src = fitz.open(source_pdf_path)
+    dst = fitz.open()
+    try:
+        page_count = src.page_count
+        expected = list(range(1, page_count + 1))
+        if sorted(one_based_new_order) != expected:
+            raise ValueError("Reorder sequence must include each page exactly once.")
+
+        for one_based in one_based_new_order:
+            idx = one_based - 1
+            dst.insert_pdf(src, from_page=idx, to_page=idx)
+        dst.save(output_pdf_path)
+    finally:
+        dst.close()
+        src.close()
+
+
 def _apply_actions(doc: fitz.Document, actions: list[dict[str, Any]]) -> None:
     redaction_pages: set[int] = set()
     for action in actions:

@@ -8,6 +8,8 @@ Windows PDF Tool is a desktop app for common PDF editing and conversion tasks:
 - Add annotations (freehand, rectangle, text note)
 - Blackout/redact sensitive content
 - Delete selected pages
+- Rotate selected pages
+- Reorder pages
 - Merge multiple PDFs
 - Compress PDF with custom settings (DPI, JPEG quality, grayscale)
 - Export PDF pages to image files (PNG/JPG)
@@ -53,8 +55,8 @@ You can drag the divider between left and right panels to resize them.
 ## 4. Basic Workflow
 
 1. Click `Open PDF`.
-2. Perform actions (annotate/delete/compress/export/etc.).
-3. Save output when prompted.
+2. Perform actions (annotate/pages/merge/compress/export).
+3. Use `Save As` to save your final result.
 
 Important: most operations save to a **new output file**. Your original file is kept unless you explicitly overwrite.
 
@@ -92,9 +94,11 @@ Blackout uses true redaction on save/processing, so underlying content in redact
 
 ---
 
-## 6. Delete Pages
+## 6. Page Operations (Delete / Rotate / Reorder)
 
 Open `Pages` tab.
+
+### A) Delete pages
 
 1. Enter pages in format like:
    - `2`
@@ -103,9 +107,26 @@ Open `Pages` tab.
    - `1,3-5,9`
 2. Click `Preview` to see delete result.
 3. Click `Delete Pages`.
-4. Choose output file path.
+4. Result is applied in viewer preview.
+5. Use `Save As` when ready.
 
-Delete operation uses the current preview state, so unsaved annotations are included.
+### B) Rotate pages
+
+1. Enter pages (for example `1,3-5`).
+2. Select angle (`90`, `180`, `270`).
+3. Click `Rotate`.
+4. Result is applied in viewer preview.
+5. Use `Save As` when ready.
+
+### C) Reorder pages
+
+1. Enter full page order (example: `3,1,2,4`).
+2. Sequence must include every page exactly once.
+3. Click `Reorder`.
+4. Result is applied in viewer preview.
+5. Use `Save As` when ready.
+
+Delete/rotate/reorder all use current preview state, so unsaved annotations are included.
 
 ---
 
@@ -178,6 +199,14 @@ Export uses the current preview state, so unsaved annotations are included.
 - Check if output file is open in another program (Acrobat/Edge).
 - Save to a different path or filename.
 
+### App asks to save when closing/opening another PDF
+
+- This is expected when there are unsaved changes.
+- Choose:
+  - `Save` to keep changes
+  - `Don't Save` to discard changes
+  - `Cancel` to continue editing
+
 ### Compression result not small enough
 
 - Lower DPI first (for example 150 -> 110 -> 96).
@@ -187,6 +216,7 @@ Export uses the current preview state, so unsaved annotations are included.
 ### Redaction still visible in old file
 
 - Redaction applies to output created by save/export/compress/delete flow.
+- Redaction applies to output created by save/export/compress/delete/rotate/reorder flow.
 - Ensure you open and check the new output file.
 
 ---
